@@ -1,4 +1,4 @@
-# quiz3 vpoll 操作方式和程式解析
+# quiz4 vpoll 操作方式和程式解析
 ###### tags: `linux-summer-2021`
 <style>
 .blue {
@@ -44,6 +44,7 @@ blue76815@blue76815-virtual-machine:~/桌面/2021成大暑期/quiz4_vpoll/8月25
 
 ### 操作總結
 `vpoll.c` :本次設計的考題
+
 `user.c` :測試碼，**用來驗證測試 vpoll 模組功能**用的
 
 <span class="blue">**因此我們先分析主要功能 `vpoll.c` 程式碼原理**</span> 
@@ -360,8 +361,65 @@ ioctl() 從 user space 如何控制到 driver模組的過程
 ### [Waiting queues](https://linux-kernel-labs.github.io/refs/heads/master/labs/device_drivers.html?highlight=ioctl#waiting-queues)
 ## 2.`user.c` 程式碼分析 
 
+### 2.1. epoll_create1()介紹
+`user.c` 程式碼建立 epoll 時是用 `epoll_create1(EPOLL_CLOEXEC)`
+而不是使用 
+```
+epoll_create(int size);
+```
+根據 [man epoll_create, epoll_create1](https://man7.org/linux/man-pages/man2/epoll_create.2.html)
 
-
+> epoll_create1()
+> 
+> If flags is 0, then, other than the fact that the obsolete size argument is dropped, epoll_create1() is the same as epoll_create().  
+> The following value can be included in flags to obtain different behavior:
+>     
+> **EPOLL_CLOEXEC**
+> 
+> Set the close-on-exec (FD_CLOEXEC) flag on the new file descriptor.  See the description of the O_CLOEXEC flag in open(2) for reasons why this may be useful.
 
 ---
+### 2.2 [epoll_ctl()](http://doc.embedfire.com/linux/imx6/base/zh/latest/system_programing/socket_io.html#id11)
 
+```
+epoll_ctl(epollfd, EPOLL_CTL_ADD, efd, &ev)
+```
+
+* epollfd: 由 epoll_create1() 函數返回的 epoll 文件描述符
+* EPOLL_CTL_ADD:要監聽的`"/dev/vpoll"`描述符efd註冊到epoll句柄中
+
+* efd:指定監聽`"/dev/vpoll"`的描述符
+
+* &ev: `struct epoll_event ev` 中的 `epoll_event` 結構如下
+```c
+typedef union epoll_data {
+    void        *ptr;
+    int          fd;
+    uint32_t     u32;
+    uint64_t     u64;
+} epoll_data_t;
+
+struct epoll_event {
+    uint32_t     events;      /* Epoll events */
+    epoll_data_t data;        /* User data variable */
+};
+```
+
+*	events可以是以下幾個巨集的集合：
+    *	EPOLLIN：表示對應的**檔案描述符可以讀**（包括"/dev/vpoll"正常關閉）。
+    *	EPOLLOUT：表示對應的**檔案描述符可以寫**。
+    *	EPOLLPRI：表示對應的**檔案描述符有緊急的資料可讀**（這裡應該表示有帶外資料到來）。
+    *	EPOLLERR：表示對應的檔案描述符發生錯誤。
+    *	EPOLLHUP：表示對應的檔案描述符被掛斷。
+    *	EPOLLET： **將EPOLL設為邊緣觸發**(Edge Triggered)模式，這是相對於準位觸發(Level Triggered)來說的。
+    *	EPOLLONESHOT：**只監聽一次事件**，當監聽完這次事件之後，如果還需要繼續監聽這個"/dev/vpoll"的話，需要再次把這個"/dev/vpoll"加入到EPOLL佇列裡。
+
+我們是註冊
+
+```c
+struct epoll_event ev = {
+    .events =
+        EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLOUT | EPOLLHUP | EPOLLPRI,
+    .data.u64 = 0,
+};
+```
